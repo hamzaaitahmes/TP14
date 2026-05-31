@@ -1,48 +1,39 @@
-# TP14
+LAB-14 — Bypass de détection Root sur Android avec Frida, Objection et Hooks Natifs
+
+Objectif
+Ce lab adopte une approche méthodique et multicouche du bypass de détection root sur Android. On ne se limite pas à une seule technique — on combine hooks Java, hooks natifs en C, l'outil Objection, et la trace d'appels système avec frida-trace pour comprendre ce que l'application fait réellement sous le capot.
+Cible : OWASP UnCrackable Level 1
+
+Environnement
+ÉlémentDétailSystèmeWindows PowerShellÉmulateurAndroid Emulator 5554Frida17.8.0Objection1.12.4Android11Package cibleowasp.mstg.uncrackable1
+
+Structure du projet
 LAB14-Bypass-Root-Frida/
+│
+├── README.md
+├── hello.js               # Vérifie que l'injection Frida fonctionne
+├── bypass_root_basic.js   # Neutralise les vérifications Java
+└── bypass_native.js       # Hooke les fonctions système en C
 
- Étape 1 — Validation de l'injection Frida
-Avant de développer des scripts complexes, il convient de s'assurer que l'infrastructure de base fonctionne correctement[cite: 2]. Un script minimal permet de valider la communication[cite: 2] :
-
-
-frida -U -f owasp.mstg.uncrackable1 -l hello.js
-```[cite: 2]
-
-Si le serveur `frida-server` est actif, l'appareil ADB connecté et les versions alignées, le terminal affiche le message suivant[cite: 2] :
-
-text
+Étape 1 — Vérifier l'injection Frida
+Avant toute chose, on s'assure que Frida peut s'injecter dans le processus cible avec un script minimal.
+bashfrida -U -f owasp.mstg.uncrackable1 -l hello.js
+Résultat attendu :
 Connected to Android Emulator 5554
 Spawned `owasp.mstg.uncrackable1`. Resuming main thread!
 [+] Script injecté: Java.perform OK
-```[cite: 2]
+Si frida-server tourne, qu'ADB est connecté et que les versions sont compatibles, l'injection se passe sans accroc.
 
-<img width="1232" height="406" alt="Test injection Frida avec hello.js" src="[https://github.com/user-attachments/assets/dbacaa53-12bb-4e63-9631-7b5a93fdbb51](https://github.com/user-attachments/assets/dbacaa53-12bb-4e63-9631-7b5a93fdbb51)" />[cite: 2]
+Étape 2 — Comportement sans intervention
+Sans bypass, l'application se ferme immédiatement au lancement avec le message suivant :
+Root detected!
+This is unacceptable. The app is now going to exit.
+C'est le point de départ. L'objectif est de faire disparaître ce blocage — et de comprendre précisément d'où il vient.
 
-Frida est alors correctement injecté dans le processus, permettant de passer aux étapes suivantes[cite: 2].
-
----
-
-### Étape 2 — Comportement initial de l'application
-Sans aucune modification, l'application identifie le root dès son ouverture et se ferme automatiquement après avoir affiché ce message d'erreur[cite: 2] :
-
-> *"Root detected! This is unacceptable. The app is now going to exit."*[cite: 2]
-
-<img width="398" height="821" alt="Root détecté - application bloquée" src="[https://github.com/user-attachments/assets/178acd47-8c49-4879-aac9-6ef72dbec20c](https://github.com/user-attachments/assets/178acd47-8c49-4879-aac9-6ef72dbec20c)" />[cite: 2]
-
-L'objectif de ce laboratoire est de supprimer ce blocage et d'analyser les raisons de son apparition[cite: 2].
-
----
-
-### Étape 3 — Premier niveau de contournement : les vérifications Java
-La majorité des applications Android effectuent leurs contrôles de sécurité au niveau de la couche Java[cite: 2]. Elles vérifient généralement la valeur de `Build.TAGS`, recherchent la présence de fichiers spécifiques comme `/system/bin/su` ou `Superuser.apk`, ou exécutent des commandes via `Runtime.exec`[cite: 2]. Le script `bypass_root_basic.js` est conçu pour intercepter et neutraliser ces vérifications[cite: 2].
-
-```bash
-frida -U -f owasp.mstg.uncrackable1 -l bypass_root_basic.js
-```[cite: 2]
-
-Le terminal confirme la mise en place progressive de chaque hook[cite: 2] :
-
-```text
+Étape 3 — Bypass Java avec bypass_root_basic.js
+La majorité des applications Android détectent le root en Java : elles vérifient Build.TAGS, cherchent des fichiers comme /system/bin/su ou Superuser.apk, ou exécutent des commandes via Runtime.exec. Ce script neutralise toutes ces vérifications.
+bashfrida -U -f owasp.mstg.uncrackable1 -l bypass_root_basic.js
+Sortie du script :
 [+] Build.TAGS -> release-keys
 [*] RootBeer non présent
 [+] Runtime.exec hooks installés
@@ -50,28 +41,13 @@ Le terminal confirme la mise en place progressive de chaque hook[cite: 2] :
 [+] File.exists bypass: /system/bin/su
 [+] File.exists bypass: /system/xbin/su
 [+] File.exists bypass: /system/app/Superuser.apk
-```[cite: 2]
+L'application se lance normalement — plus de popup, plus de fermeture forcée.
 
-<img width="1368" height="466" alt="Bypass Java actif" src="[https://github.com/user-attachments/assets/27471f65-aad4-46ba-aff4-b6fe223a1ea7](https://github.com/user-attachments/assets/27471f65-aad4-46ba-aff4-b6fe223a1ea7)" />[cite: 2]
-
-À ce stade, l'application s'exécute normalement, sans affichage de pop-up ni fermeture forcée[cite: 2].
-
-<img width="403" height="828" alt="Application accessible après bypass Java" src="[https://github.com/user-attachments/assets/dedac173-bb0c-46d2-af2c-e5d6b3bb93c7](https://github.com/user-attachments/assets/dedac173-bb0c-46d2-af2c-e5d6b3bb93c7)" />[cite: 2]
-
----
-
-### Étape 4 — Contournement avancé : implémentation des hooks natifs
-Certaines applications complètent leurs vérifications en interrogeant directement le système via du code natif (C/C++) via le NDK, contournant ainsi les API Java[cite: 2]. Elles appellent des fonctions système telles que `open`, `stat`, `access` ou `readlink` pour inspecter le système de fichiers à bas niveau[cite: 2]. Les hooks Java sont inefficaces contre ces méthodes[cite: 2].
-
-Pour y remédier, nous injectons simultanément un second script[cite: 2] :
-
-```bash
-frida -U -f owasp.mstg.uncrackable1 -l bypass_root_basic.js -l bypass_native.js
-```[cite: 2]
-
-Frida intercepte alors les fonctions directement au niveau du binaire[cite: 2] :
-
-```text
+Étape 4 — Bypass natif avec bypass_native.js
+Certaines applications contournent les APIs Java et effectuent leurs vérifications directement via du code natif (C/C++ via le NDK), en appelant des fonctions système comme open, stat, access ou readlink. Les hooks Java n'ont aucun effet sur cette couche.
+On ajoute le second script en parallèle :
+bashfrida -U -f owasp.mstg.uncrackable1 -l bypass_root_basic.js -l bypass_native.js
+Sortie :
 [+] Hooked native open
 [+] Hooked native openat
 [+] Hooked native access
@@ -80,45 +56,21 @@ Frida intercepte alors les fonctions directement au niveau du binaire[cite: 2] :
 [+] Hooked native fopen
 [+] Hooked native readlink
 [+] Native root bypass installed
-```[cite: 2]
+Avec les deux scripts actifs simultanément, on couvre l'intégralité des couches de détection — Java et native. C'est le bypass le plus complet réalisable avec cette approche.
 
-<img width="1476" height="686" alt="Bypass Java + natif combinés" src="[https://github.com/user-attachments/assets/fa906311-0596-4b7d-9069-a3127270fea8](https://github.com/user-attachments/assets/fa906311-0596-4b7d-9069-a3127270fea8)" />[cite: 2]
-
-L'activation conjointe de ces deux scripts permet de couvrir à la fois la couche Java et la couche native, offrant une solution de contournement complète[cite: 2].
-
----
-
-### Étape 5 — Alternative automatisée avec Objection
-Afin de comparer notre méthode manuelle avec un outil automatisé, nous testons l'utilisation du framework Objection[cite: 2] :
-
-```bash
-objection -g owasp.mstg.uncrackable1 explore --startup-command "android root disable"
-```[cite: 2]
-
-Le terminal indique la prise en compte de la commande dès le démarrage[cite: 2] :
-
-```text
+Étape 5 — Alternative rapide avec Objection
+Pour les cas standards, Objection permet de faire la même chose en une seule commande :
+bashobjection -g owasp.mstg.uncrackable1 explore --startup-command "android root disable"
+Sortie :
 Running a startup command... android root disable
 (agent) Registering job. Name: root-detection-disable
 owasp.mstg.uncrackable1 on Android: 11 [usb]
-```[cite: 2]
+Objection est idéal pour tester rapidement. En revanche, dès qu'une application implémente des vérifications personnalisées, les scripts Frida manuels redeviennent indispensables.
 
-<img width="1465" height="441" alt="Bypass via Objection" src="[https://github.com/user-attachments/assets/4e314f01-9b08-4a3a-ac19-57b9b535ea09](https://github.com/user-attachments/assets/4e314f01-9b08-4a3a-ac19-57b9b535ea09)" />[cite: 2]
-
-Objection permet de traiter rapidement les cas standards sans rédaction de code JavaScript[cite: 2]. Cependant, l'utilisation de scripts personnalisés reste nécessaire face à des vérifications spécifiques ou modifiées[cite: 2].
-
----
-
-### Étape 6 — Observation des appels système via frida-trace
-Cette technique permet d'analyser les fonctions appelées par l'application en temps réel avant de concevoir un script de contournement[cite: 2] :
-
-```bash
-frida-trace -U -i open -i access -i stat -i openat -i fopen -i readlink Uncrackable1
-```[cite: 2]
-
-L'outil configure les points de contrôle pour les fonctions sélectionnées[cite: 2] :
-
-```text
+Étape 6 — Observer les appels système avec frida-trace
+Avant d'écrire un bypass, il est souvent plus efficace d'observer ce que l'application appelle réellement en temps réel. frida-trace génère automatiquement des handlers pour chaque fonction tracée.
+bashfrida-trace -U -i open -i access -i stat -i openat -i fopen -i readlink Uncrackable1
+Sortie :
 Instrumenting...
 open: Auto-generated handler
 access: Auto-generated handler
@@ -127,8 +79,14 @@ openat: Auto-generated handler
 fopen: Auto-generated handler
 readlink: Auto-generated handler
 Started tracing 6 functions.
-```[cite: 2]
+Cette technique permet de voir exactement quels fichiers l'application tente d'ouvrir, quels chemins elle inspecte et quelles commandes elle teste. À partir de là, écrire un bypass ciblé devient beaucoup plus direct.
 
-<img width="1458" height="244" alt="Trace des appels natifs" src="[https://github.com/user-attachments/assets/25ce916a-1242-433d-acd8-1e36191ea2a5](https://github.com/user-attachments/assets/25ce916a-1242-433d-acd8-1e36191ea2a5)" />[cite: 2]
+Récapitulatif des techniques
+TechniqueCommandeUsageBypass Javafrida -l bypass_root_basic.jsNeutralise les checks Java standardsBypass natiffrida -l bypass_native.jsIntercepte les appels système en CBypass combinéLes deux scripts en même tempsCouverture maximaleObjectionandroid root disableBypass rapide pour cas standardsTracefrida-trace -i open -i stat ...Observation des appels avant bypass
 
-Ce suivi permet d'identifier précisément les fichiers, commandes et chemins ciblés par l'application, facilitant ainsi la création d'un script de bypass adapté[cite: 2].
+Prérequis
+
+frida-server démarré sur l'émulateur Android
+ADB connecté et fonctionnel
+Versions Frida client/serveur alignées
+OWASP UnCrackable Level 1 installé sur l'émulateur
